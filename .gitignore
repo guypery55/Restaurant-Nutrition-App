@@ -1,0 +1,19 @@
+# --- Secrets (NEVER commit) ---
+# Client config with real Supabase URL/anon key (use dart_define.example.json as the template)
+app/dart_define.json
+# Edge Function secrets for local serve (use supabase/functions/.env.example as the template)
+supabase/functions/.env
+.env
+.env.local
+.env.*.local
+.env.keys
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+*.iml
+
+# --- Misc ---
+*.log
