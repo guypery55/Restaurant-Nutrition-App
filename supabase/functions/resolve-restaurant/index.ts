@@ -160,8 +160,10 @@ async function handleSelect(
     method: "GET",
     headers: {
       "X-Goog-Api-Key": apiKey,
-      // Field mask keeps the request cheap — only what we store.
-      "X-Goog-FieldMask": "id,displayName,formattedAddress,location",
+      // Field mask keeps the request cheap — only what we store. websiteUri is
+      // Session 3's primary menu-retrieval seed (the official site).
+      "X-Goog-FieldMask":
+        "id,displayName,formattedAddress,location,websiteUri",
       "Accept-Language": "he",
     },
   });
@@ -177,13 +179,14 @@ async function handleSelect(
   const address: string | null = place.formattedAddress ?? null;
   const lat: number | null = place.location?.latitude ?? null;
   const lng: number | null = place.location?.longitude ?? null;
+  const website: string | null = place.websiteUri ?? null;
 
   const db = adminClient();
   // Upsert on place_id (unique) so re-selecting the same branch never dupes.
   const { data: row, error } = await db
     .from("restaurants")
     .upsert(
-      { place_id: canonicalPlaceId, name, address, lat, lng },
+      { place_id: canonicalPlaceId, name, address, lat, lng, website },
       { onConflict: "place_id" },
     )
     .select()

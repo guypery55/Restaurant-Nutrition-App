@@ -32,6 +32,7 @@ class Restaurant {
     this.address,
     this.lat,
     this.lng,
+    this.website,
   });
 
   final String id;
@@ -41,6 +42,9 @@ class Restaurant {
   final double? lat;
   final double? lng;
 
+  /// Official website from Google Places — Session 3's primary menu source.
+  final String? website;
+
   factory Restaurant.fromJson(Map<String, dynamic> json) {
     return Restaurant(
       id: json['id'] as String,
@@ -49,6 +53,7 @@ class Restaurant {
       address: json['address'] as String?,
       lat: (json['lat'] as num?)?.toDouble(),
       lng: (json['lng'] as num?)?.toDouble(),
+      website: json['website'] as String?,
     );
   }
 }
