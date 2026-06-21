@@ -9,7 +9,8 @@ explicitly **not** for medical use.
 
 This document is organized into **sessions**. Each session is a self-contained
 unit of work you can hand to Claude Code on its own ("do Session 3"). Sessions
-build on each other in order. Sessions 0–7 are the MVP; Session 8 is post-MVP.
+build on each other in order. Sessions 0–7 are the core MVP loop; Session 8 adds the last-resort
+food-photo fallback; Session 9 is post-MVP.
 
 From Session 2 on, each session ends with a **Checks** block: concrete
 verification steps — including the easy-to-miss AI-pipeline traps (grounding,
@@ -49,6 +50,24 @@ the next session. Treat a session as incomplete until its Checks pass.
    with qualitative tags and a one-line reasoning so the number feels grounded.
 6. **Neutral tone, persistent disclaimer.** Assessments, not judgments. No
    "good/bad food." Disclaimer always visible on results.
+
+## Menu acquisition: the fallback ladder
+
+Getting a menu — or, failing that, an answer — follows three tiers, each a
+fallback for the one above. The earlier the tier, the better: tiers 1–2 store
+real dishes and grow the database (the moat); tier 3 is a safety net so the user
+is never left with nothing.
+
+1. **Web-fetch (Session 3) — primary, automatic.** Retrieve and grounded-parse
+   the restaurant's real menu. Builds the dish database with zero user effort.
+2. **Menu photo (Session 4) — fallback when web-fetch finds nothing.** The user
+   photographs the printed menu; the same grounded parser extracts and stores
+   the dishes. Still builds the database; reliable where no menu exists online.
+3. **Food photo (Session 8) — last resort, when there is no menu at all.** The
+   user photographs the dish itself and the model estimates its nutrition
+   directly from the image. A standalone, one-off estimate: no menu, no stored
+   dish, and the least reliable tier — so it leans hardest on wide ranges and
+   the disclaimer. It exists only so "no menu found" is never a dead end.
 
 ## Tech stack
 
@@ -284,10 +303,12 @@ No prose, no markdown.
 
 ---
 
-# SESSION 4 — Fallback: photo-uploaded menu
+# SESSION 4 — Tier-2 fallback: photo-uploaded menu
 
-**Goal:** when auto-fetch fails, let the user photograph a menu and parse it the
-same way.
+**Goal:** when web-fetch (tier 1) finds no menu, let the user photograph the
+printed menu and parse it the same way. This still builds the dish database. (If
+there is no menu to photograph at all, tier 3 — Session 8 — estimates from a
+photo of the food itself.)
 
 **Build:**
 - When `fetch-menu` returns "not found," surface: "Couldn't find this menu —
@@ -431,7 +452,59 @@ No prose, no markdown.
 
 ---
 
-# SESSION 8 — Post-MVP: accounts, history, personalization
+# SESSION 8 — Tier-3 fallback: estimate from a food photo (last resort)
+
+**Goal:** when no menu can be obtained — not by web-fetch (Session 3) and not by
+photographing a menu (Session 4) — let the user photograph the dish itself and
+still get a nutrition estimate, so "no menu found" is never a dead end.
+
+This is the bottom rung of the acquisition ladder. Unlike tiers 1–2 it does
+**not** build the dish database: there is no menu and no stored dish — it's a
+one-off estimate straight from an image. It is also the least reliable input
+(hidden oil, portion size, what's under the rice), so it leans hardest on wide
+ranges and the disclaimer.
+
+**Build:**
+- Surface this option **only after the menu routes are exhausted**: web-fetch
+  returned nothing and the user has no menu to photograph (or the menu photo
+  produced no dishes). Framing: "אין תפריט? צלמו את המנה ונעריך אותה."
+- Reuse the camera / upload + Supabase Storage flow from Session 4.
+- Add a **vision variant of the estimator** (Session 6) in `estimate-dishes`
+  (or a sibling function): it takes the image instead of a dish name, identifies
+  the likely dish, and returns the SAME estimate shape (ranges, macros, tags,
+  reasoning). If the image clearly isn't food, return a "couldn't identify a
+  dish" signal — never invent one (the grounding rule, applied to images).
+- Display the result in the same results UI (Session 7): a per-photo estimate,
+  and if the user snaps several dishes, a combined total like the menu basket.
+
+**Scope decisions (MVP — revisit if needed):**
+- The estimate is **ephemeral**: it is NOT written to `dish_estimates` (it has
+  no `dish_id`). Persisting standalone food-photo estimates for history is
+  deferred to Session 9 (accounts/history).
+- A restaurant may be selected when the user reaches this tier, but the estimate
+  is **not** stored against it — the restaurant context is navigational only.
+- Consistency caching (principle #3) does not apply: every food photo is unique,
+  so there is no prior estimate to reuse.
+
+**Done when:**
+- [ ] When both menu routes fail, the user is offered the food-photo option.
+- [ ] Photographing a dish returns a nutrition estimate in the standard shape
+      and renders in the results UI with the disclaimer.
+- [ ] A photo that is not food returns a clear "couldn't identify a dish," not
+      an invented estimate.
+
+**Checks (run these before moving on):**
+- [ ] Force the full failure path (no web menu, no menu photo) → the food-photo
+      last resort appears, not a dead end.
+- [ ] Photograph a real dish → a sensible estimate as ranges, with the
+      "estimated from a photo" + "not medical advice" framing visible.
+- [ ] Photograph a non-food image → handled cleanly, no invented dish.
+- [ ] Confirm nothing is written to `dish_estimates` for a food-photo estimate
+      (it is ephemeral in MVP).
+
+---
+
+# SESSION 9 — Post-MVP: accounts, history, personalization
 
 **Goal:** retention and the data flywheel. Only after the MVP is validated.
 
@@ -464,5 +537,6 @@ No prose, no markdown.
 
 ## Build order at a glance
 
-`0 setup → 1 schema → 2 resolve → 3 fetch+parse → 4 photo fallback →
-5 menu+basket → 6 estimate → 7 results (MVP) → 8 accounts/history`
+`0 setup → 1 schema → 2 resolve → 3 web-fetch menu → 4 menu-photo fallback →
+5 menu+basket → 6 estimate → 7 results (core MVP loop) →
+8 food-photo last resort → 9 accounts/history`
