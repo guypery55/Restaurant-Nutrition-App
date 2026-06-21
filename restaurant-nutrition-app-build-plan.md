@@ -11,6 +11,11 @@ This document is organized into **sessions**. Each session is a self-contained
 unit of work you can hand to Claude Code on its own ("do Session 3"). Sessions
 build on each other in order. Sessions 0–7 are the MVP; Session 8 is post-MVP.
 
+From Session 2 on, each session ends with a **Checks** block: concrete
+verification steps — including the easy-to-miss AI-pipeline traps (grounding,
+caching, consistency) — for Claude Code to run and confirm before moving on to
+the next session. Treat a session as incomplete until its Checks pass.
+
 ---
 
 ## Product summary
@@ -199,6 +204,17 @@ create table dish_estimates (
 - [ ] Selecting one creates/returns a `restaurants` row with a canonical `place_id`.
 - [ ] Misspelled and Hebrew-language inputs still resolve sensibly.
 
+**Checks (run these before moving on):**
+- [ ] Search a known restaurant in Hebrew → real candidates with addresses appear.
+- [ ] Misspell the name → it still resolves to the right place.
+- [ ] Search a chain with several branches → distinct branches are listed, and
+      selecting one stores that branch's specific `place_id`.
+- [ ] Re-select the same place → the `restaurants` table holds exactly one row
+      for it (the upsert dedupes, no duplicates).
+- [ ] Inspect the client bundle / network: the Google Places key never appears
+      client-side (calls go through `resolve-restaurant`).
+- [ ] Empty or garbage input is handled without crashing.
+
 ---
 
 # SESSION 3 — Menu acquisition pipeline (fetch + grounded parse + store)
@@ -250,6 +266,22 @@ No prose, no markdown.
 - [ ] A second request within the freshness window serves from cache (no re-fetch).
 - [ ] When given content with no menu, the parser returns empty (no invented dishes).
 
+**Checks (run these before moving on):**
+- [ ] Pick a restaurant with a known online menu → a structured dish list returns
+      and rows land in `menus` + `dishes`.
+- [ ] **Grounding (critical):** feed the parser a page with no menu (e.g. an
+      "About" page) → it returns empty, not invented dishes. Then spot-check 3–4
+      returned dishes against the real source page — every one must actually be on it.
+- [ ] **Cache:** call `fetch-menu` twice for the same restaurant inside the
+      freshness window → the second call does not re-fetch (log a cache hit;
+      `fetched_at` is unchanged).
+- [ ] **Freshness:** set `fetched_at` to ~40 days ago → the next call re-fetches
+      and updates the timestamp.
+- [ ] Secret safety: the model/search keys are used only inside the function;
+      nothing sensitive is returned to the client.
+- [ ] Malformed or empty model output is handled without crashing (the function
+      validates the JSON shape).
+
 ---
 
 # SESSION 4 — Fallback: photo-uploaded menu
@@ -269,6 +301,16 @@ same way.
 - [ ] A photographed menu is parsed into dishes and stored like a fetched one.
 - [ ] The dish list looks the same to the rest of the app regardless of source.
 
+**Checks (run these before moving on):**
+- [ ] Force a not-found (a place with no findable menu) → the photo-upload prompt
+      appears.
+- [ ] Upload a clear menu photo → dishes parse and store with `source='photo'`,
+      and the image lands in Supabase Storage.
+- [ ] **Grounding still holds:** upload a photo that is NOT a menu → empty result
+      or handled error, no invented dishes.
+- [ ] A photo-sourced menu renders and behaves identically to a web-sourced one
+      in every downstream screen.
+
 ---
 
 # SESSION 5 — Menu display & assessment basket
@@ -285,6 +327,14 @@ same way.
 - [ ] The full menu renders cleanly in Hebrew/RTL.
 - [ ] Users can add/remove dishes to a visible basket.
 - [ ] Nothing is computed until the Check button is pressed.
+
+**Checks (run these before moving on):**
+- [ ] Menu renders grouped by section; Hebrew text is right-to-left and correctly
+      aligned.
+- [ ] Add and remove dishes → the basket count updates accurately every time.
+- [ ] Watch the network tab while adding to the basket → zero estimation/API calls
+      fire (estimation is strictly on-demand).
+- [ ] The Check button is disabled on an empty basket and shows the count when populated.
 
 ---
 
@@ -334,6 +384,18 @@ No prose, no markdown.
 - [ ] Re-checking the same dish returns identical numbers (served from cache).
 - [ ] Portion adjustment rescales numbers without a new model call.
 
+**Checks (run these before moving on):**
+- [ ] Select dishes, press Check → the response matches the estimator JSON shape
+      (ranges, macros, tags, reasoning) for every dish.
+- [ ] **Consistency (critical):** check the same dish twice → identical numbers,
+      and confirm the second check makes no model call (served from `dish_estimates`).
+- [ ] Combined total equals the sum of the per-dish ranges — verify the arithmetic
+      by hand on a two-dish example.
+- [ ] **Portion scaling:** set a dish to 2× → numbers exactly double and no network
+      request fires.
+- [ ] A freshly-estimated dish gets written to `dish_estimates` (check the table).
+- [ ] Malformed model output is caught and handled, never shown to the user as garbage.
+
 ---
 
 # SESSION 7 — Results UI, disclaimer & polish (MVP complete)
@@ -355,6 +417,18 @@ No prose, no markdown.
 - [ ] You can hand it to a few people with real Israeli menus and the estimates
       feel trustworthy enough to influence a choice. **(This is the MVP's real test.)**
 
+**Checks (run these before moving on):**
+- [ ] Full end-to-end run on a phone, and on Chrome if you target web: search →
+      menu → select → estimate → results, with no dead ends.
+- [ ] The disclaimer is visible on the results screen and cannot be permanently
+      scrolled away.
+- [ ] Simulate failures: kill the network mid-fetch and mid-estimate → clear error
+      states, no crash, and a way to retry.
+- [ ] Tone review: no red/"bad" styling and no shaming language anywhere in results.
+- [ ] **Real-user check:** hand it to 3–5 people with real Israeli menus and note
+      whether the estimates feel trustworthy enough to change what they'd order —
+      the qualitative bar that actually validates the MVP.
+
 ---
 
 # SESSION 8 — Post-MVP: accounts, history, personalization
@@ -370,6 +444,14 @@ No prose, no markdown.
 **Done when:**
 - [ ] Users can sign in, save restaurants, and revisit past assessments.
 - [ ] User corrections are captured and improve stored data.
+
+**Checks (run these before moving on):**
+- [ ] Sign up, sign out, sign back in → the session persists across an app relaunch.
+- [ ] Save a restaurant → it appears in favorites after a fresh launch.
+- [ ] Complete an assessment, reopen it from history → the data matches what was shown.
+- [ ] **Security:** signed in as user A, attempt to read user B's saved data → blocked
+      by Row Level Security.
+- [ ] Submit a portion correction → it persists and shows on the next view of that dish.
 
 ---
 
