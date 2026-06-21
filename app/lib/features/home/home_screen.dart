@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../config/app_config.dart';
+import '../../models/restaurant.dart';
 import '../../services/supabase_service.dart';
+import '../search/search_screen.dart';
 
 /// Placeholder home screen for Session 0.
 ///
@@ -18,6 +20,16 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   String? _status;
   bool _busy = false;
+  Restaurant? _resolved;
+
+  Future<void> _openSearch() async {
+    final restaurant = await Navigator.of(context).push<Restaurant>(
+      MaterialPageRoute(builder: (_) => const SearchScreen()),
+    );
+    if (restaurant != null && mounted) {
+      setState(() => _resolved = restaurant);
+    }
+  }
 
   Future<void> _runConnectivityTest() async {
     setState(() {
@@ -67,6 +79,22 @@ class _HomeScreenState extends State<HomeScreen> {
             _ConfigBanner(configured: configured),
             const SizedBox(height: 24),
             FilledButton.icon(
+              onPressed: configured ? _openSearch : null,
+              icon: const Icon(Icons.search),
+              label: const Text('חיפוש מסעדה'),
+            ),
+            if (_resolved != null) ...[
+              const SizedBox(height: 16),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.check_circle, color: Color(0xFF3B7A57)),
+                  title: Text(_resolved!.name),
+                  subtitle: Text(_resolved!.address ?? ''),
+                ),
+              ),
+            ],
+            const SizedBox(height: 24),
+            OutlinedButton.icon(
               onPressed: _busy ? null : _runConnectivityTest,
               icon: _busy
                   ? const SizedBox(

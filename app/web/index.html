@@ -34,6 +34,16 @@
 </head>
 <body>
   <!--
+    Passkeys Web SDK. Pulled in transitively by supabase_flutter (gotrue →
+    passkeys_web); the plugin registers on web at startup and throws "Passkeys
+    Web SDK not loaded" — blanking the app — if this script is absent. We don't
+    use passkeys yet (auth is Session 8); this just satisfies the plugin. The
+    bundle is vendored locally (web/passkeys_bundle.js) to avoid a runtime
+    dependency on GitHub. Must load before flutter_bootstrap.js.
+  -->
+  <script src="passkeys_bundle.js"></script>
+
+  <!--
     You can customize the "flutter_bootstrap.js" script.
     This is useful to provide a custom configuration to the Flutter loader
     or to give the user feedback during the initialization process.
