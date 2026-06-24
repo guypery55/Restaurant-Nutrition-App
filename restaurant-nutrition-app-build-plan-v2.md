@@ -519,6 +519,13 @@ dishes to an assessment basket (local state); a persistent "Check (N)" button.
 - [ ] Network tab shows zero estimation calls while adding to the basket.
 - [ ] Check button disabled when empty; shows count when populated.
 
+**Implemented (2026-06-24):** `lib/models/dish.dart`, `lib/services/menu_service.dart`
+(`fetch-menu` wrapper → `MenuResult.found/.notCovered`), `lib/features/menu/menu_screen.dart`
+(FutureBuilder; loading / found / not-covered / error+retry; dishes grouped by section in
+first-appearance order; tap toggles a local basket; persistent "בדיקה (N)" bar disabled when
+empty), and a wired `home_screen` (search → push MenuScreen). No estimation on this screen —
+Check only navigates. Plain Flutter local state, no state-mgmt package.
+
 ---
 
 # SESSION 6 — Nutrition estimation (per-dish + combined)
@@ -565,6 +572,37 @@ No prose, no markdown.
 - [ ] Portion 2× exactly doubles, with no network request.
 - [ ] A fresh dish writes a `dish_estimates` row.
 - [ ] Malformed model output is caught and handled, never shown as garbage.
+
+**Implemented (2026-06-24):** backend `estimate-dishes` + shared `_shared/estimate` (Haiku,
+one-per-dish cache) were built/deployed earlier; this session wired the client.
+`lib/models/dish_estimate.dart` (parses the row; `.scaled(factor)` is LOCAL portion math —
+no model call), `lib/services/estimate_service.dart` (`estimate(dishIds)` → `Map<dishId, est>`),
+and the real `lib/features/assessment/assessment_screen.dart`: calls the estimator on open,
+shows a combined-total card (summed ranges) + per-dish cards (calorie headline, macro grid,
+reasoning, ½×/1×/2× portion selector), graceful "couldn't estimate" line per dish, persistent
+"אינה ייעוץ רפואי" disclaimer. Live-verified against the deployed function (correct shape,
+`cached:true`).
+
+**Added beyond the original plan (2026-06-24):**
+
+- **Precise mode** — a pinned טווח / מדויק (Range / Precise) toggle on the assessment screen.
+  In precise mode every low–high figure (per-dish calories + macros AND the combined total)
+  collapses to its midpoint average. Display-only; estimates and portion math are untouched.
+
+- **Macro ratings (calorie-share)** — `lib/models/macro_rating.dart`: `rateMacros({calories,
+  protein, carbs, sugars, fat})` rates each macro low/moderate/high by its **share of total
+  CALORIES** (never weight). 4 kcal/g for protein/carbs/sugars, 9 for fat;
+  `pct = grams*kcal/calories*100`. Thresholds: protein high≥20/mod≥12 (higher better); carbs
+  high≥65/mod≥45 (neutral); sugars high≥10/mod≥5 (lower better); fat high≥35/mod≥20 (lower
+  better). Each rating carries a `direction` + `isPositive`. Divide-by-zero guarded
+  (calories≤0 → 0% / low). Fully unit-tested in `test/macro_rating_test.dart` (boundaries
+  incl. exactly-20%-protein / 10%-sugar, plus the zero-calorie guard).
+
+- **Positives-only dish highlights** — the dish card now shows ONLY good flags (green chips),
+  replacing the raw estimate tags: a dessert surfaces דל בסוכר / דל בשומן when genuinely low;
+  mains & starters surface עשיר בחלבון when genuinely high in protein. Nothing shown when
+  there's nothing good to say — no warnings, no red (neutral, non-shaming framing). Ratings
+  use range midpoints; share is portion-invariant so highlights are stable across ½×/2×.
 
 ---
 

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../config/app_config.dart';
 import '../../models/restaurant.dart';
 import '../../services/supabase_service.dart';
+import '../menu/menu_screen.dart';
 import '../search/search_screen.dart';
 
 /// Placeholder home screen for Session 0.
@@ -26,9 +27,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final restaurant = await Navigator.of(context).push<Restaurant>(
       MaterialPageRoute(builder: (_) => const SearchScreen()),
     );
-    if (restaurant != null && mounted) {
-      setState(() => _resolved = restaurant);
-    }
+    if (restaurant == null || !mounted) return;
+    setState(() => _resolved = restaurant);
+    // search → menu: go straight into the selected restaurant's menu.
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => MenuScreen(restaurant: restaurant)),
+    );
   }
 
   Future<void> _runConnectivityTest() async {
@@ -90,6 +94,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   leading: const Icon(Icons.check_circle, color: Color(0xFF3B7A57)),
                   title: Text(_resolved!.name),
                   subtitle: Text(_resolved!.address ?? ''),
+                  trailing: const Icon(Icons.chevron_left),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => MenuScreen(restaurant: _resolved!),
+                    ),
+                  ),
                 ),
               ),
             ],
