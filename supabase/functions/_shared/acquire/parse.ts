@@ -16,6 +16,22 @@ For each dish return: name_he (original text, usually Hebrew), name_translit
 (Latin transliteration), description (if present), section (if present), price
 (number only, if present).
 
+SPLIT PRICE-GROUPED OPTION LISTS. Menus often put several separate, individually
+orderable items on ONE line that share a single price — typically toppings,
+add-ons, soft drinks, juices, sides, or beers, e.g. "Fried egg / Portobello /
+Grilled pepper — 9" or "Pepsi / Cola / Sprite — 12". When a line lists multiple
+items separated by "/" (or "," / "•") where EACH segment is a complete,
+standalone item you could order on its own, return EACH option as its OWN
+dish — every one carrying that shared price, the same section, and (if any) the
+same description.
+
+Do NOT split when the separator only joins variants or adjectives of a SINGLE
+dish rather than distinct items: "Vegan / Vegetarian burger" is ONE dish (the
+"/" picks a diet of the same burger), and a compound name like "Mix potato &
+sweet-potato fries" or "Peanut butter & bamba" is ONE dish. Rule of thumb: if a
+segment, standing alone, names a thing you could order by itself, split it out;
+if a segment is just a modifier of a shared noun, keep the line as one dish.
+
 Respond with ONLY a JSON object: { "dishes": [ { "name_he": "...",
 "name_translit": "...", "description": "...", "section": "...", "price": 0 } ] }.
 No prose, no markdown.`;
