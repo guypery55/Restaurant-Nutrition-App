@@ -2,15 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../../config/app_config.dart';
 import '../../models/restaurant.dart';
-import '../../services/supabase_service.dart';
 import '../menu/menu_screen.dart';
 import '../search/search_screen.dart';
 
-/// Placeholder home screen for Session 0.
+/// Home / landing screen.
 ///
-/// Its only real job right now is to prove the Session 0 plumbing works:
-/// the app boots in Hebrew/RTL, and (once credentials are wired) the anon
-/// client can round-trip a row to Supabase via the "connectivity test".
+/// The warm entry point to the loop: a short welcome and the search as the hero
+/// action (search → menu → assess). After a restaurant is resolved it stays
+/// pinned as a "last viewed" card so it's one tap to return to its menu.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -19,8 +18,6 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  String? _status;
-  bool _busy = false;
   Restaurant? _resolved;
 
   Future<void> _openSearch() async {
@@ -35,125 +32,99 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<void> _runConnectivityTest() async {
-    setState(() {
-      _busy = true;
-      _status = null;
-    });
-    try {
-      if (!AppConfig.isConfigured) {
-        throw StateError(
-          'Supabase לא מוגדר. הריצו עם --dart-define-from-file=dart_define.json',
-        );
-      }
-      // Insert a ping and read it back — exercises anon read + write.
-      final inserted = await SupabaseService.client
-          .from('pings')
-          .insert({'note': 'session-0 connectivity test'})
-          .select()
-          .single();
-      setState(() => _status = 'הצליח ✓  (id: ${inserted['id']})');
-    } catch (e) {
-      setState(() => _status = 'נכשל: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+  void _openResolved() {
+    final r = _resolved;
+    if (r == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => MenuScreen(restaurant: r)),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final configured = AppConfig.isConfigured;
+    final scheme = Theme.of(context).colorScheme;
+
     return Scaffold(
       appBar: AppBar(title: const Text('הערכת תזונה במסעדות')),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text(
-              'ברוכים הבאים 👋',
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'הקלידו שם של מסעדה, בחרו מנות, וקבלו הערכת תזונה מבוססת בינה מלאכותית. '
-              'כל הנתונים הם הערכות — לא ייעוץ רפואי.',
-            ),
-            const SizedBox(height: 24),
-            _ConfigBanner(configured: configured),
-            const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: configured ? _openSearch : null,
-              icon: const Icon(Icons.search),
-              label: const Text('חיפוש מסעדה'),
-            ),
-            if (_resolved != null) ...[
-              const SizedBox(height: 16),
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.check_circle, color: Color(0xFF3B7A57)),
-                  title: Text(_resolved!.name),
-                  subtitle: Text(_resolved!.address ?? ''),
-                  trailing: const Icon(Icons.chevron_left),
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => MenuScreen(restaurant: _resolved!),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Spacer(),
+              Icon(
+                Icons.restaurant_menu,
+                size: 72,
+                color: scheme.primary,
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'מה אוכלים?',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
                     ),
-                  ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'חפשו מסעדה, בחרו מנות, וקבלו הערכת תזונה מבוססת בינה מלאכותית — '
+                'קלוריות ומרכיבים, לכל מנה ובסך הכול.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+              ),
+              const SizedBox(height: 28),
+              FilledButton.icon(
+                onPressed: configured ? _openSearch : null,
+                icon: const Icon(Icons.search),
+                label: const Text('חיפוש מסעדה'),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(52),
                 ),
               ),
+              if (!configured) ...[
+                const SizedBox(height: 12),
+                Text(
+                  'החיבור לשרת אינו מוגדר.',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: scheme.error,
+                      ),
+                ),
+              ],
+              if (_resolved != null) ...[
+                const SizedBox(height: 16),
+                Card(
+                  margin: EdgeInsets.zero,
+                  child: ListTile(
+                    leading: Icon(Icons.history, color: scheme.primary),
+                    title: Text(_resolved!.name),
+                    subtitle: (_resolved!.address?.isNotEmpty ?? false)
+                        ? Text(
+                            _resolved!.address!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          )
+                        : null,
+                    trailing: const Icon(Icons.chevron_left),
+                    onTap: _openResolved,
+                  ),
+                ),
+              ],
+              const Spacer(),
+              Text(
+                'הערכת בינה מלאכותית — אינה ייעוץ רפואי.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+              ),
             ],
-            const SizedBox(height: 24),
-            OutlinedButton.icon(
-              onPressed: _busy ? null : _runConnectivityTest,
-              icon: _busy
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.cloud_done_outlined),
-              label: const Text('בדיקת חיבור ל-Supabase'),
-            ),
-            if (_status != null) ...[
-              const SizedBox(height: 16),
-              Text(_status!, textAlign: TextAlign.center),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ConfigBanner extends StatelessWidget {
-  const _ConfigBanner({required this.configured});
-
-  final bool configured;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: configured
-            ? scheme.secondaryContainer
-            : scheme.errorContainer,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        children: [
-          Icon(configured ? Icons.check_circle_outline : Icons.warning_amber),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              configured
-                  ? 'Supabase מוגדר.'
-                  : 'Supabase לא מוגדר — העתיקו dart_define.example.json ל-dart_define.json והריצו עם --dart-define-from-file.',
-            ),
           ),
-        ],
+        ),
       ),
     );
   }
