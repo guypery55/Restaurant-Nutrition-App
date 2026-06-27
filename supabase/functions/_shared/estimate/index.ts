@@ -10,12 +10,27 @@ const ESTIMATE_MODEL = Deno.env.get("ESTIMATE_MODEL") ?? "claude-haiku-4-5";
 const MAX_CONCURRENT = 5; // be gentle on rate limits during the seed batch
 
 const ESTIMATOR_PROMPT =
-  `You are estimating the nutrition of a SINGLE restaurant dish for a
+  `You are estimating the nutrition of a SINGLE restaurant item for a
 general-interest app. This is NOT for medical use.
 
-Given the dish name and description, estimate a typical single serving as RANGES
-(low to high) to express uncertainty. First decompose the dish into its likely
-components and portions in one short reasoning sentence, then give the ranges.
+You are given the item's name, its menu SECTION, and (if any) a description. Use
+the section as context for BOTH what the item is and how large a portion to
+assume:
+- A standalone dish (starter, main, salad, soup, dessert, etc.) → a typical
+  single restaurant serving.
+- A TOPPING / ADD-ON / EXTRA (e.g. a section like "תוספות", "תוספות להמבורגר",
+  "add-ons", "toppings", "extras") → ONLY the small portion actually added on top
+  of another dish (often ~15-40g, e.g. a spoonful of an ingredient), NOT a full
+  standalone serving.
+- A SIDE or a DRINK → a typical side / single drink portion.
+
+Interpret ambiguous preparations by this context and plain meaning. For example,
+"בצל מטוגן" (fried onion) as a burger topping is a small amount of sautéed /
+caramelized onion, NOT battered deep-fried onion rings — assume a battered /
+breaded / "rings" / "crispy" form only if the name explicitly says so.
+
+First decompose the item into its likely components and portion in one short
+reasoning sentence, then give the ranges (low to high) to express uncertainty.
 Use realistic Israeli / Middle-Eastern portion sizes.
 
 Return ONLY this JSON:
@@ -47,6 +62,7 @@ interface DishRow {
   name_he: string;
   name_translit: string | null;
   description: string | null;
+  section: string | null;
 }
 
 /// Estimate nutrition for a set of dish ids. Cache hit → reuse the stored row
@@ -61,7 +77,7 @@ export async function estimateDishes(
 
   // Fetch dish text + any already-cached estimates in two reads.
   const [{ data: dishes }, { data: cached }] = await Promise.all([
-    db.from("dishes").select("id, name_he, name_translit, description").in("id", ids),
+    db.from("dishes").select("id, name_he, name_translit, description, section").in("id", ids),
     db.from("dish_estimates").select("*").in("dish_id", ids),
   ]);
 
@@ -136,7 +152,8 @@ async function estimateOne(dish: DishRow): Promise<EstimateFields | null> {
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not configured.");
 
   const name = [dish.name_translit, dish.name_he].filter(Boolean).join(" / ");
-  const userText = `Dish: ${name}` +
+  const userText = `Item: ${name}` +
+    (dish.section ? `\nSection: ${dish.section}` : "") +
     (dish.description ? `\nDescription: ${dish.description}` : "");
 
   try {
