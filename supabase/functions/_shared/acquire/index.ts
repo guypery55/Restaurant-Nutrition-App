@@ -14,11 +14,15 @@ import { firecrawlMap, firecrawlScrape, jinaScrape } from "./scrape.ts";
 import { type ParsedDish, parseMenuFile, parseMenuText } from "./parse.ts";
 import { discoverOwnSite } from "./discover.ts";
 
-// ~90s budget. The grounded parse now also SPLITS price-grouped option lists,
-// which lengthens its output; sites whose multi-page menu sat right at the old
-// 60s edge (e.g. burgermarket.co.il, ~59s) need a little more headroom. Still
-// comfortably under the ~150s edge worker wall-clock limit.
-const BUDGET_MS = 90_000;
+// Overall ceiling for an inline live fetch. Kept tight on purpose: a user is
+// waiting on a spinner, so a miss must degrade to "not covered yet" within a
+// tolerable window rather than stalling the client (a 75s platform-only fetch
+// did exactly that). Individual steps are bounded too (discovery 30s, each
+// scrape 25s). Seeded restaurants are cache hits and never run this; the cost
+// of a tighter budget is only that a rare unseeded HEAVY site may time out and
+// land in menu_requests to be seeded later — the documented MVP trade-off
+// (the real fix for heavy sites is the Phase-2 background queue).
+const BUDGET_MS = 55_000;
 const IMAGE_EXT = /\.(png|jpe?g|webp|gif)$/;
 const ASSET_EXT = /\.(svg|png|jpe?g|webp|gif|pdf|ico|css|js|mp4|woff2?)$/;
 const MENU_HINT = /menu|תפריט|%d7%aa%d7%a4%d7%a8%d7%99%d7%98/i; // incl. URL-encoded תפריט

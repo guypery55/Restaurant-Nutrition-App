@@ -2,8 +2,15 @@
 // only a platform link. One bounded Claude web_search query (no open-ended
 // loop), returning a single own-domain URL or null.
 
+import { fetchWithTimeout } from "./scrape.ts";
+
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const DISCOVER_MODEL = Deno.env.get("MENU_MODEL") ?? "claude-sonnet-4-6";
+// Hard cap on the whole discovery step. A web_search (+ a pause_turn
+// continuation) can otherwise run a minute or more — and for a platform-only
+// restaurant this search is the ENTIRE cost before we return "not covered", so
+// it must fail fast. On timeout we treat discovery as "no own site found".
+const DISCOVERY_BUDGET_MS = 30_000;
 
 const DISCOVERY_PROMPT =
   `Find the OFFICIAL OWN WEBSITE of the restaurant named below. Return ONLY the
@@ -27,32 +34,42 @@ export async function discoverOwnSite(
     content: `Restaurant: "${name}", ${area ?? "Israel"}, Israel`,
   }];
 
+  const deadline = Date.now() + DISCOVERY_BUDGET_MS;
   let final: Record<string, unknown> | null = null;
-  for (let i = 0; i <= 1; i++) {
-    const res = await fetch(ANTHROPIC_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: DISCOVER_MODEL,
-        max_tokens: 1024,
-        thinking: { type: "disabled" },
-        system: DISCOVERY_PROMPT,
-        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 1 }],
-        messages,
-      }),
-    });
-    if (!res.ok) throw new Error(`Discovery failed (${res.status})`);
-    const data = await res.json();
-    if (data.stop_reason === "pause_turn") {
-      messages.push({ role: "assistant", content: data.content });
-      continue;
+  // Any failure or timeout here is non-fatal: discovery is a best-effort
+  // recovery step, so we return null (→ graceful "not covered") rather than
+  // throwing and turning a miss into a 500.
+  try {
+    for (let i = 0; i <= 1; i++) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return null;
+      const res = await fetchWithTimeout(ANTHROPIC_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: DISCOVER_MODEL,
+          max_tokens: 1024,
+          thinking: { type: "disabled" },
+          system: DISCOVERY_PROMPT,
+          tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 1 }],
+          messages,
+        }),
+      }, remaining);
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data.stop_reason === "pause_turn") {
+        messages.push({ role: "assistant", content: data.content });
+        continue;
+      }
+      final = data;
+      break;
     }
-    final = data;
-    break;
+  } catch {
+    return null; // timeout / network error → no own site found
   }
   if (!final) return null;
 
