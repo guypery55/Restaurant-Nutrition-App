@@ -5,8 +5,11 @@ and stores its real menu → pick dishes into an "assessment" → an AI returns 
 estimated nutrition breakdown per dish and combined. All numbers are
 **AI estimates shown as ranges — not medical advice.**
 
-The full product plan and session-by-session breakdown live in
-[restaurant-nutrition-app-build-plan_1.md](restaurant-nutrition-app-build-plan_1.md).
+The full product plan and session-by-session breakdown live in `roadmaps/`:
+the MVP (Sessions 0–7) in
+[build-plan-v2](roadmaps/restaurant-nutrition-app-build-plan-v2.md), and the
+post-MVP roadmap (Sessions 8+) in
+[build-plan-v3](roadmaps/restaurant-nutrition-app-build-plan-v3.md).
 
 ## Repo layout
 
