@@ -171,6 +171,13 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
+/// Show a dish description only when it contains Hebrew. The catalog is
+/// normalized to Hebrew, but a freshly live-fetched menu can still carry an
+/// English description until the pipeline normalizer (v3 Session 10) translates
+/// it — hide those rather than show English text under a Hebrew menu.
+bool _showDescription(String? d) =>
+    d != null && d.isNotEmpty && RegExp(r'[֐-׿]').hasMatch(d);
+
 class _DishTile extends StatelessWidget {
   const _DishTile({
     required this.dish,
@@ -195,7 +202,7 @@ class _DishTile extends StatelessWidget {
         color: selected ? scheme.primary : scheme.outline,
       ),
       title: Text(dish.nameHe),
-      subtitle: (dish.description?.isNotEmpty ?? false)
+      subtitle: _showDescription(dish.description)
           ? Text(
               dish.description!,
               maxLines: 2,
