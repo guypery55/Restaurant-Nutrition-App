@@ -20,9 +20,11 @@ Make the app **genuinely good** before worrying about shipping it — earn the
 launch rather than rush it. Near-term, two things in priority order:
 
 1. **Trust & accuracy** — estimates and data must feel credible to a stranger.
-2. **Self-healing coverage** — misses fix themselves; the catalog grows on its
-   own without hand-seeding every restaurant (with 6 places, a stranger's first
-   search almost always misses — that reads as "broken" and kills trust too).
+2. **Self-healing coverage (organic)** — the catalog grows on its own from real
+   searches via the live/queue pipeline; **no bulk pre-seeding**. This is a
+   deliberate **bet on pipeline quality**: make acquisition good enough that
+   misses are rare. Risk accepted (2026-07-01): with only 6 seeded places, early
+   coverage rides entirely on that pipeline.
 
 **Parked by decision (2026-06-30):** public launch / app store, and user
 accounts. The app stays **anonymous, no-login** for now; launch surface
@@ -53,10 +55,11 @@ below). We still detail each session together before building it.
   ("we're getting this menu — check back"); a worker acquires + auto-estimates;
   cron re-fetches stale menus. Fixes the slow-fetch UX **and** lets coverage
   self-heal.
-- **Session 10 — Scraper depth + coverage seed push** *(+ display-language fix)*
-  Capture the JS-API menus Jina/Firecrawl currently miss; grow the catalog to a
-  respectable size via the queue + targeted seeds; track coverage from
-  `menu_requests`.
+- **Session 10 — Pipeline & scraper depth: the organic coverage engine** *(+ Hebrew text normalization)*
+  Coverage is **organic** (no bulk pre-seed): the live/queue pipeline must
+  reliably capture whatever a user searches, so this session pushes its depth —
+  the JS-API, PDF and image menus Jina/Firecrawl currently miss — and folds in
+  the Hebrew text normalization (below).
   **Plus — guarantee consistent Hebrew display TEXT (pipeline-level):** the
   grounded parser stores "the original text" into `name_he` AND `description`, so
   an English / bilingual source (or the multi-page merge blending an English
@@ -86,34 +89,53 @@ below). We still detail each session together before building it.
   > contains Hebrew (`menu_screen._showDescription`), so any not-yet-normalized
   > English description (e.g. a fresh live fetch before S10) is hidden rather than
   > shown under a Hebrew menu.
-- **Session 11 — Verification workflow + user feedback loop**
-  A path to flip `verified=false → true`; user-facing "report an issue / looks
-  off" on a dish or menu → `feedback` table feeding corrections.
-- **Session 12 — Abuse & cost guards** *(pre-exposure hardening)*
-  Rate limits + daily caps + cost ceilings on the three functions. Needed before
-  ANY public exposure — which is parked, so this lands when launch returns.
+- **Session 11 — Quality ops: verification + feedback + observability**
+  Flip `verified=false → true`; user "report an issue / looks off" → `feedback`
+  table feeding corrections; plus an internal **metrics view** (miss rate, top
+  `menu_requests`, coverage %, pipeline success/fail, spend) that tells us what to
+  improve and what it costs.
+
+> Near-term arc ends at Session 11. Everything below is parked until we choose to
+> launch.
 
 ### Parked / deferred (revisit when we decide to launch)
+- **Abuse & cost guards** — per-device/IP rate limits + daily caps + cost
+  ceilings on the three open functions (`verify_jwt=false`). Fully parked
+  2026-07-01: no users yet, so nothing to abuse; this is the gate to add right
+  before any public exposure. (A global spend-cap safety net can be dropped in
+  anytime if test usage grows.)
 - **Accounts & history** — Supabase Auth (anon + optional sign-in), saved
   restaurants, past assessments, per-user RLS, notify-when-ready. Deferred →
   anonymous-only for now.
 - **Launch & store readiness** — web/PWA link and/or Android store, onboarding +
   disclaimer gate, privacy/ToS, crash monitoring, security/RLS review. Out of
   near-term scope by decision.
+- **Later features (considered, consciously deferred 2026-07-01):** estimator
+  confidence label (high/med/low); dietary filters/tags (vegan / gluten-free /
+  high-protein); photo-of-menu fallback (user uploads a menu photo → grounded
+  vision parse — the true last resort for coverage).
+- **Also considered, out of near-term scope:** discovery UX (browse / nearby /
+  popular — note: with organic coverage users can't easily tell what's covered,
+  so a "browse covered places" view may be worth revisiting); broader automated
+  tests/CI; English UI / i18n; allergen data. Logged here so they're not silently
+  missed; none block the trust+coverage work.
 
 ---
 
 ## Open questions to resolve as we plan
 *(we fill these in together; they drive the detail of each session)*
 
-- **Resolved:** launch surface → parked; accounts → deferred (anonymous-only);
-  order → trust then coverage.
-- Coverage (S9/S10): target catalog size + which cities/cuisines first? how
-  "pending" looks to the user (poll vs check-back)? freshness window?
-- Cost guards (S12): per-device limits + acceptable monthly ceiling (decide when
-  launch returns).
-- Trust (S8/S11): final reconciliation tolerance; how aggressively to tighten
-  ranges; where provenance lives (menu vs assessment).
+- **Resolved (2026-06-30 / 07-01):** launch & store → parked; accounts → parked
+  (anonymous-only); cost/abuse guards → parked (no users yet); order → trust then
+  coverage; coverage strategy → **organic** (no bulk seed — the pipeline is the
+  engine); observability → **in** (S11); confidence label / dietary filters /
+  photo fallback → parked as later features.
+- **Decide in-session (S9):** pending-menu UX (auto-appear via poll/Realtime vs
+  "check back") — guided by "misses should be rare because the pipeline is good";
+  freshness window length.
+- **Decide in-session (S8/S11):** reconciliation tolerance; how aggressively to
+  tighten ranges; where provenance lives (menu vs assessment); verification
+  surface (connector/SQL vs a tiny protected screen).
 
 ---
 
@@ -175,3 +197,89 @@ artificially), and visibly grounded in the real menu. Comfort comes from
 **Still open for Session 8 (decide during build):** exact reconciliation
 tolerance; how aggressively to tighten (calibrate against the audit); whether
 provenance lives on the menu screen, the assessment screen, or both.
+
+---
+
+### Session 9 — Background acquisition queue + auto-estimate
+
+**Goal:** take live acquisition **off the request path** so a miss never blocks
+the user, and so organic coverage can grow reliably (no inline timeout dropping
+heavy/slow sites). This is the structural fix behind the "make misses rare" bet.
+
+**Build:**
+- A queue (Supabase **pgmq**) + a **worker** (pg_cron-invoked Edge Function, or
+  pg_cron calling a function) that runs `acquireMenu` for queued restaurants.
+- `fetch-menu` on a cache miss: **enqueue** the restaurant and return `pending`
+  immediately — no inline scrape, no waiting.
+- Worker per job: `acquireMenu` → store menu + dishes → **auto-run
+  `estimate-dishes`** for the new dishes (a covered menu is instantly usable) →
+  Hebrew-normalize (S10).
+- De-dupe / state: never enqueue a place already pending; track job status; cap
+  retries; record failures.
+- **Freshness:** cron re-enqueues menus older than the freshness window.
+
+**Decide in-session:** the pending UX (auto-appear via poll/Realtime vs "check
+back later") — optimize the common *cached* path first; misses should be rare.
+
+**Checks:**
+- A miss returns instantly as `pending` (no long wait); the worker fills it
+  within ~minutes; dishes + estimates appear on the next view.
+- No request-path stalls; the inline time budget no longer gates the user.
+- Stale menus get re-acquired by cron; re-enqueue is idempotent; concurrent
+  requests for one place don't double-process.
+- No-menu results still log `menu_requests` with a reason; **zero fabrication**.
+
+---
+
+### Session 10 — Pipeline & scraper depth (organic coverage engine) + Hebrew normalization
+
+**Goal:** because coverage is **organic**, the pipeline must reliably capture
+whatever a user searches — including the JS-API, PDF and image menus it currently
+misses — and emit consistent Hebrew. (See the arc entry above for the full Hebrew
+normalization spec + the already-done hand-backfill + shipped app guard.)
+
+**Build:**
+- **Scraper depth:** add Firecrawl `interact`/actions to render JS-gated menus;
+  capture the **XHR/JSON menu endpoint** when items load via an API; harden the
+  **PDF** path (text + the garbled-RTL case → render-to-image vision) and the
+  **image-menu vision** path.
+- **Discovery:** better own-site + **Hebrew menu-page** resolution (prefer the
+  `he` version over `/en/`); broaden menu-subpage detection.
+- **Hebrew text normalization:** parse-time guarantee `name_he` + `description`
+  are Hebrew, English kept in `name_translit`; prefer the Hebrew source.
+- Keep grounding throughout — never invent.
+
+**Checks:**
+- On a test set of previously-missed sites (JS / PDF / image), coverage rises
+  measurably — record before/after.
+- New menus come out **fully Hebrew** (names + descriptions); both languages
+  stored per dish.
+- No-menu sites still return empty / not-covered (no fabrication).
+- Inherent limits documented honestly (sites still unreadable → hand-seed or
+  later photo fallback).
+
+---
+
+### Session 11 — Quality ops: verification + feedback + observability
+
+**Goal:** watch the catalog's quality and improve it — verify menus, capture user
+corrections, and see how the system performs (which also informs coverage and the
+future cost guards).
+
+**Build:**
+- **Verification:** review a menu against its `source_url` and flip
+  `verified=false → true` (admin via the Supabase connector/SQL, or a tiny
+  protected screen — it's just you for now). Surface the verified badge (built in
+  S8).
+- **Feedback:** user "report an issue / looks off" on a dish or menu → a
+  `feedback` table (`place_id, dish_id, type, note, created_at`) with RLS (anon
+  insert, no anon read); no anti-abuse needed pre-launch.
+- **Observability/metrics:** internal SQL views (or a tiny page) — miss rate, top
+  `menu_requests` (what to cover next), coverage %, pipeline success/fail by
+  reason, estimate coverage, and a rough **spend** view from function logs/usage.
+
+**Checks:**
+- Verify a menu → the badge shows and persists.
+- Feedback writes a row under correct RLS; visible to you, not publicly readable.
+- Metrics reconcile with the DB (counts match); miss rate + top requests are
+  actionable (drive what S10 improves next).
