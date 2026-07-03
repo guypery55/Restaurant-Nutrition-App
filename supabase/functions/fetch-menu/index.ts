@@ -47,7 +47,7 @@ Deno.serve(async (req: Request) => {
     // Cache check — a fresh stored menu wins, no scrape/model call.
     const { data: existingMenu } = await db
       .from("menus")
-      .select("id, fetched_at, source, scraper, source_url")
+      .select("id, fetched_at, source, scraper, source_url, verified")
       .eq("restaurant_id", restaurantId)
       .maybeSingle();
     if (existingMenu && !force) {
@@ -65,6 +65,8 @@ Deno.serve(async (req: Request) => {
           source: existingMenu.source,
           scraper: existingMenu.scraper,
           source_url: existingMenu.source_url,
+          fetched_at: existingMenu.fetched_at,
+          verified: existingMenu.verified === true,
           dishes: dishes ?? [],
         });
       }
@@ -81,6 +83,8 @@ Deno.serve(async (req: Request) => {
         source: "web",
         scraper: result.scraper,
         source_url: result.source_url,
+        // A freshly acquired web menu is never human-verified yet (S11 flips it).
+        verified: false,
         dishes: result.dishes,
         ...(debug ? { trace: result.trace } : {}),
       });

@@ -3,6 +3,12 @@
 // one-per-dish in `dish_estimates` for consistency (principle #3). Reused by the
 // estimate-dishes function (live, on a basket check) and by the Session 4 seed
 // batch. Estimation is cheap + high-volume → Haiku, not Sonnet.
+//
+// Session 8 (v3) — trust & accuracy: the estimator now (a) self-checks macro↔
+// calorie consistency via 4·P+4·C+9·F before returning, EXEMPTING alcohol
+// (~7 cal/g ethanol) and near-zero items where the identity is meaningless;
+// (b) gets the restaurant name as extra anchoring context; (c) is asked for an
+// honest-but-tight (~±15-20%) range. No extra per-dish call — all prompt-level.
 import type { SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
@@ -13,9 +19,10 @@ const ESTIMATOR_PROMPT =
   `You are estimating the nutrition of a SINGLE restaurant item for a
 general-interest app. This is NOT for medical use.
 
-You are given the item's name, its menu SECTION, and (if any) a description. Use
-the section as context for BOTH what the item is and how large a portion to
-assume:
+You are given the RESTAURANT name (context for cuisine / style / portion norms),
+the item's name, its menu SECTION, and (if any) a description. Use the
+restaurant + section together to judge BOTH what the item is and how large a
+portion to assume:
 - A standalone dish (starter, main, salad, soup, dessert, etc.) → a typical
   single restaurant serving.
 - A TOPPING / ADD-ON / EXTRA (e.g. a section like "תוספות", "תוספות להמבורגר",
@@ -31,7 +38,23 @@ breaded / "rings" / "crispy" form only if the name explicitly says so.
 
 First decompose the item into its likely components and portion in one short
 reasoning sentence, then give the ranges (low to high) to express uncertainty.
-Use realistic Israeli / Middle-Eastern portion sizes.
+Use realistic Israeli / Middle-Eastern portion sizes. Aim for an HONEST but
+TIGHT range — roughly ±15-20% around your best point estimate, not a 2× spread.
+Do not pad the range as a hedge; if you are genuinely unsure, a wider range is
+fine, but do not inflate it out of caution.
+
+SELF-CONSISTENCY CHECK (do this silently before returning): the calories you
+report must reconcile with the macros via 4·protein + 4·carbs + 9·fat, using the
+midpoints of each range. If your calorie midpoint and macro-implied calories
+disagree by more than ~20%, revise the numbers until they agree, then return the
+revised ranges.
+EXCEPTIONS — do NOT force this check for:
+- ALCOHOL / alcoholic drinks (beer, wine, cider, cocktails): ethanol is ~7 cal/g
+  and is NOT captured by 4/4/9, so its calories legitimately exceed the macro
+  sum. Estimate alcohol calories realistically and tag it "alcoholic".
+- Very low-calorie items (roughly under 30 kcal, e.g. diet sodas, plain/flavored
+  water, tiny garnishes): the 4/4/9 identity is meaningless at that scale — just
+  give sensible small numbers.
 
 Return ONLY this JSON:
 { "calories_low":0,"calories_high":0,"protein_low":0,"protein_high":0,
@@ -63,6 +86,8 @@ interface DishRow {
   name_translit: string | null;
   description: string | null;
   section: string | null;
+  // Embedded via dishes → menus → restaurants; used only as estimator context.
+  menus: { restaurants: { name: string } | null } | null;
 }
 
 /// Estimate nutrition for a set of dish ids. Cache hit → reuse the stored row
@@ -77,7 +102,9 @@ export async function estimateDishes(
 
   // Fetch dish text + any already-cached estimates in two reads.
   const [{ data: dishes }, { data: cached }] = await Promise.all([
-    db.from("dishes").select("id, name_he, name_translit, description, section").in("id", ids),
+    db.from("dishes").select(
+      "id, name_he, name_translit, description, section, menus(restaurants(name))",
+    ).in("id", ids),
     db.from("dish_estimates").select("*").in("dish_id", ids),
   ]);
 
@@ -152,7 +179,9 @@ async function estimateOne(dish: DishRow): Promise<EstimateFields | null> {
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not configured.");
 
   const name = [dish.name_translit, dish.name_he].filter(Boolean).join(" / ");
-  const userText = `Item: ${name}` +
+  const restaurant = dish.menus?.restaurants?.name?.trim();
+  const userText = (restaurant ? `Restaurant: ${restaurant}\n` : "") +
+    `Item: ${name}` +
     (dish.section ? `\nSection: ${dish.section}` : "") +
     (dish.description ? `\nDescription: ${dish.description}` : "");
 

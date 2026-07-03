@@ -85,10 +85,21 @@ class _MenuScreenState extends State<MenuScreen> {
           if (result.dishes.isEmpty) {
             return const _NotCovered();
           }
-          return _MenuList(
-            dishes: result.dishes,
-            selectedIds: _selected.keys.toSet(),
-            onTap: _toggle,
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Verified badge (Session 8). Shown only for a human-verified menu;
+              // nothing flips menus.verified true until Session 11, so today this
+              // is invisible — the wiring is ready for when it does.
+              if (result.verified) const _VerifiedBanner(),
+              Expanded(
+                child: _MenuList(
+                  dishes: result.dishes,
+                  selectedIds: _selected.keys.toSet(),
+                  onTap: _toggle,
+                ),
+              ),
+            ],
           );
         },
       ),
@@ -144,6 +155,38 @@ class _MenuList extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/// A calm "verified menu" strip shown above the dishes when the menu has been
+/// human-checked against its source (`menus.verified`). Positive, non-shouty —
+/// same seed green as the assessment screen's positive chips. Text only, no
+/// source/date line (that provenance stays in the DB, deferred from the UI).
+class _VerifiedBanner extends StatelessWidget {
+  const _VerifiedBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    const green = Color(0xFF3B7A57); // the app's seed green
+    return Container(
+      width: double.infinity,
+      color: green.withValues(alpha: 0.10),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.verified, size: 18, color: green),
+          const SizedBox(width: 6),
+          Text(
+            'תפריט מאומת',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: green,
+                  fontWeight: FontWeight.w600,
+                ),
+          ),
+        ],
+      ),
     );
   }
 }

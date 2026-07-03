@@ -11,6 +11,7 @@ class MenuResult {
     this.source,
     this.scraper,
     this.sourceUrl,
+    this.verified = false,
   })  : found = true,
         reason = null;
 
@@ -19,13 +20,19 @@ class MenuResult {
         dishes = const [],
         source = null,
         scraper = null,
-        sourceUrl = null;
+        sourceUrl = null,
+        verified = false;
 
   final bool found;
   final List<Dish> dishes;
   final String? source;
   final String? scraper;
   final String? sourceUrl;
+
+  /// Whether this menu has been human-verified against its source
+  /// (`menus.verified`). Drives the verified badge; nothing sets it true until
+  /// Session 11's verification flow, so today it's always false.
+  final bool verified;
 
   /// 'no_website' | 'platform_only' | 'no_menu_found' | 'timeout' — only when
   /// [found] is false.
@@ -63,6 +70,7 @@ class MenuService {
       source: data['source'] as String?,
       scraper: data['scraper'] as String?,
       sourceUrl: data['source_url'] as String?,
+      verified: data['verified'] == true,
     );
   }
 }

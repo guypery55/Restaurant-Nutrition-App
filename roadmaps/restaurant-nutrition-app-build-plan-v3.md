@@ -47,9 +47,15 @@ accounts. The app stays **anonymous, no-login** for now; launch surface
 Near-term focus: **trust, then coverage.** Launch & accounts are parked (see
 below). We still detail each session together before building it.
 
-- **Session 8 — Estimate trust & accuracy** ✓ *planned (detail below)*
-  Self-consistent (4/4/9) + tighter accurate ranges; catalog audit + re-estimate
-  fliers; source/freshness + "verified" badge in UI.
+- **Session 8 — Estimate trust & accuracy** ✓ *BUILT 2026-07-01 (detail below)*
+  Self-consistency (4/4/9) with alcohol + near-zero exemptions baked into the
+  estimator + restaurant-name context; reusable catalog audit script. **The live
+  audit found the estimator was already accurate** (229 real-food estimates,
+  median reconciliation error 2.9%, median range ±18.7%, **0 needing review** —
+  every flier was alcohol or a near-zero drink), so the accuracy work became a
+  forward-looking guardrail for organic estimates, not a catalog rescue, and no
+  re-estimation was needed. Trust UI scoped down (user decision): **verified
+  badge only**, no source/date line — provenance data stays in the DB for later.
 - **Session 9 — Background acquisition queue + auto-estimate** *(planning next)*
   Move live fetch off the request path: a miss enqueues and returns instantly
   ("we're getting this menu — check back"); a worker acquires + auto-estimates;
@@ -197,6 +203,55 @@ artificially), and visibly grounded in the real menu. Comfort comes from
 **Still open for Session 8 (decide during build):** exact reconciliation
 tolerance; how aggressively to tighten (calibrate against the audit); whether
 provenance lives on the menu screen, the assessment screen, or both.
+
+**OUTCOME (built 2026-07-01):**
+
+*What the live audit showed (251 estimates, before touching anything):* median
+reconciliation error **3.1%**, median calorie range width **37.6% (≈ ±19%,
+already at the ±15-20% target)**. All 13 fliers over tolerance were **alcohol**
+(beer/cider — ethanol ~7 cal/g breaks 4/4/9) or **near-zero drinks** (diet
+sodas / water — a 2-vs-3 kcal gap reads as huge % noise). In the 10-20% band,
+real food maxed at 18%. **Zero genuinely-wrong real-food estimates.** So the
+estimator was already accurate; the session re-weighted from "rescue the catalog"
+to "guardrail future organic estimates + ship the trust surface the user wants."
+
+*Decisions locked:*
+- **Reconciliation tolerance = 20% relative**, with two exemptions the data
+  demanded: **alcohol tags skipped entirely**, and **items < 30 kcal excluded**
+  (identity meaningless at that scale). Every real-food estimate passes; every
+  false positive is excluded.
+- **No forced tightening** — already at ±19% median; shrinking further would
+  manufacture false precision. Calibrate, don't shrink (the plan's own principle).
+- **Estimator scope = forward-looking guardrail only** — upgrade the prompt so
+  new/organic estimates stay clean (S9/S10 auto-estimate); **no mass
+  re-estimate** (nothing real to fix; re-running alcohol wouldn't/shouldn't
+  reconcile anyway).
+- **Trust UI scoped down (user):** **verified badge only** on the menu screen —
+  no "based on `<domain>`, updated `<date>`" line, no "how we estimate" text.
+  Provenance (`source_url`, `fetched_at`, `verified`) stays in the DB and is now
+  threaded to the client, ready to surface in a later session.
+
+*Built:*
+- `_shared/estimate/index.ts` — prompt now (a) self-checks 4·P+4·C+9·F↔calories
+  within ~20% before returning, **exempting alcohol & <30 kcal**; (b) receives
+  the **restaurant name** (embedded via dishes→menus→restaurants) as anchoring
+  context; (c) asks for an honest-but-tight ±15-20% range. Kept the S7
+  section/portion (topping vs full dish) rules. No extra per-dish call — all
+  prompt-level, so cost is unchanged.
+- `supabase/scripts/audit_estimates.sql` — reusable, read-only audit with the
+  classification-aware verdict (alcohol / near_zero / real_food; only real_food
+  out of tolerance = `needs_review`). Re-run confirms **needs_review = 0**.
+  Reused by S11 metrics.
+- `fetch-menu` → `MenuResult` → `menu_screen`: `verified` (+ `fetched_at`) now
+  flow to the client; a calm green "תפריט מאומת" badge renders when
+  `verified = true`. Invisible today (0 verified menus); S11's verification flow
+  flips it on.
+
+*Checks met:* audit reports 0 real-food inconsistencies (alcohol/near-zero
+explicitly exempt); ranges left at the honest ±19% median (not artificially
+shrunk); known-good topping/portion behavior preserved by keeping the S7 rules;
+badge wired end-to-end. **Deploy + live re-estimate spot-check still to run**
+(edge functions not yet redeployed this session — see note to user).
 
 ---
 
