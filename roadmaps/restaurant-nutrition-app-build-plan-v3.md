@@ -250,8 +250,13 @@ to "guardrail future organic estimates + ship the trust surface the user wants."
 *Checks met:* audit reports 0 real-food inconsistencies (alcohol/near-zero
 explicitly exempt); ranges left at the honest ±19% median (not artificially
 shrunk); known-good topping/portion behavior preserved by keeping the S7 rules;
-badge wired end-to-end. **Deploy + live re-estimate spot-check still to run**
-(edge functions not yet redeployed this session — see note to user).
+badge wired end-to-end. **Deployed** `estimate-dishes` + `fetch-menu` and ran a
+live spot-check: cleared + re-estimated the Heineken beer through the new prompt
+— it returned ~50 kcal tagged `alcoholic` with reasoning about ethanol calories
+and did NOT force macro reconciliation (the exemption works); catalog re-audited
+`needs_review = 0`. Committed on branch `session-8-estimate-trust`. *(Known nit,
+out of scope: alcohol calories skew low — a 330 ml Heineken is ~140 kcal; not
+chased, alcohol is exempt from the accuracy target.)*
 
 ---
 
