@@ -1,10 +1,13 @@
 import '../models/dish.dart';
 import 'supabase_service.dart';
 
-/// Outcome of a menu fetch.
+/// Outcome of a menu fetch. Exactly one of three states:
 ///
-/// Either we [found] a menu (then [dishes] is populated) or we didn't (then
-/// [reason] explains why — driving the "not covered yet" UI in Session 7).
+/// - [found]: [dishes] is populated.
+/// - [pending]: the live fetch was taking too long, so it was handed to the
+///   background acquisition queue (Session 9). The menu isn't ready yet — the
+///   screen shows "we're working on it" and auto-polls until it lands.
+/// - neither: not covered (then [reason] explains why — the "not covered yet" UI).
 class MenuResult {
   const MenuResult.found({
     required this.dishes,
@@ -13,10 +16,22 @@ class MenuResult {
     this.sourceUrl,
     this.verified = false,
   })  : found = true,
+        pending = false,
+        reason = null;
+
+  const MenuResult.pending()
+      : found = false,
+        pending = true,
+        dishes = const [],
+        source = null,
+        scraper = null,
+        sourceUrl = null,
+        verified = false,
         reason = null;
 
   const MenuResult.notCovered({this.reason})
       : found = false,
+        pending = false,
         dishes = const [],
         source = null,
         scraper = null,
@@ -24,6 +39,11 @@ class MenuResult {
         verified = false;
 
   final bool found;
+
+  /// Being acquired in the background right now (the live fetch exceeded its
+  /// budget). Not an error and not a miss — just "check back in a moment".
+  final bool pending;
+
   final List<Dish> dishes;
   final String? source;
   final String? scraper;
@@ -35,7 +55,7 @@ class MenuResult {
   final bool verified;
 
   /// 'no_website' | 'platform_only' | 'no_menu_found' | 'timeout' — only when
-  /// [found] is false.
+  /// [found] is false and not [pending].
   final String? reason;
 }
 
@@ -56,6 +76,9 @@ class MenuService {
     final data = res.data as Map<String, dynamic>;
     if (data['ok'] != true) {
       throw Exception(data['error'] ?? 'Menu fetch failed');
+    }
+    if (data['pending'] == true) {
+      return const MenuResult.pending();
     }
     if (data['found'] != true) {
       return MenuResult.notCovered(reason: data['reason'] as String?);

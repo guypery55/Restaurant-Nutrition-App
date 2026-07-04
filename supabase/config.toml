@@ -445,3 +445,12 @@ entrypoint = "./functions/resolve-restaurant/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/resolve-restaurant/*.html" ]
+
+# Background acquisition worker (Session 9). Public (verify_jwt off) but guarded
+# by the shared QUEUE_WORKER_SECRET in the x-queue-secret header — callers are
+# fetch-menu (from its env) and pg_cron (from Vault), never a user JWT.
+[functions.process-menu-queue]
+enabled = true
+verify_jwt = false
+import_map = "./functions/process-menu-queue/deno.json"
+entrypoint = "./functions/process-menu-queue/index.ts"
