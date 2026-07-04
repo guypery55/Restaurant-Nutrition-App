@@ -56,11 +56,13 @@ below). We still detail each session together before building it.
   forward-looking guardrail for organic estimates, not a catalog rescue, and no
   re-estimation was needed. Trust UI scoped down (user decision): **verified
   badge only**, no source/date line — provenance data stays in the DB for later.
-- **Session 9 — Background acquisition queue + auto-estimate** *(planning next)*
-  Move live fetch off the request path: a miss enqueues and returns instantly
-  ("we're getting this menu — check back"); a worker acquires + auto-estimates;
-  cron re-fetches stale menus. Fixes the slow-fetch UX **and** lets coverage
-  self-heal.
+- **Session 9 — Background acquisition queue + auto-estimate** ✓ *BUILT + DEPLOYED + live-verified 2026-07-04 (detail below)*
+  Move the **slow** fetch off the request path while keeping a live try: a miss
+  first tries to acquire live (~55s); if that's too long it enqueues + returns
+  `pending` ("we're working on it") and the app auto-polls; a background worker
+  acquires with a longer budget + **auto-estimates**; pg_cron re-kicks the worker
+  and re-fetches stale menus. Fixes the slow-fetch UX **and** lets coverage
+  self-heal. (Used a `menu_jobs` **table**, not pgmq — see OUTCOME.)
 - **Session 10 — Pipeline & scraper depth: the organic coverage engine** *(+ Hebrew text normalization)*
   Coverage is **organic** (no bulk pre-seed): the live/queue pipeline must
   reliably capture whatever a user searches, so this session pushes its depth —
@@ -288,6 +290,77 @@ back later") — optimize the common *cached* path first; misses should be rare.
 - Stale menus get re-acquired by cron; re-enqueue is idempotent; concurrent
   requests for one place don't double-process.
 - No-menu results still log `menu_requests` with a reason; **zero fabrication**.
+
+**OUTCOME (built + deployed + live-verified 2026-07-04):**
+
+*Shape the user chose (this reshaped the plan's "enqueue immediately"):* keep the
+**live try**, then fall back to the queue. fetch-menu still attempts a live
+acquire while the user waits (~55s budget — the proven inline value, ≈ the "60s"
+the user picked); only if that budget is exceeded does it hand off to the
+background queue and return `pending` → *"אנחנו אוספים את התפריט הזה… כמה דקות
+ונחזור אליך."* The pending screen **auto-polls** every 15s (×8, ~2 min) so the
+menu appears on its own, then offers a manual refresh (user chose auto-poll over
+"check back").
+
+*Deliberate deviation from the plan text:* it named **pgmq**; we used a plain
+**`menu_jobs` table** instead. The plan's own checks (de-dupe, status tracking,
+retry caps, failure records) are trivial with a table + a **partial unique index**
+(`where status in ('pending','processing')` → idempotent enqueue, no
+double-process) and awkward with pgmq (no native dedupe).
+
+*Built:*
+- **DB** (migration `20260704120000_menu_jobs_queue`): enabled `pg_cron` +
+  `pg_net`; `public.menu_jobs` (status pending/processing/done/failed, attempts,
+  reason, last_error) + partial-unique active index + `claim_menu_jobs(batch)`
+  — an atomic `FOR UPDATE SKIP LOCKED` claim so two worker invocations never grab
+  the same job. RLS on, no anon policy (client polls fetch-menu, never reads the
+  table).
+- **Worker** `process-menu-queue` (new Edge Function, `verify_jwt=false`, guarded
+  by the shared `QUEUE_WORKER_SECRET` in `x-queue-secret`): claims jobs → runs
+  `acquireMenu` with a **longer 110s budget** (the whole point — heavy sites that
+  time out the live try get acquired here) → **auto-runs `estimateDishes`** on the
+  new dishes so a covered menu is instantly usable → marks done/failed. Timeouts
+  retry (cap 3); genuine misses fail immediately (already logged to
+  menu_requests). Responds 202 + drains in `EdgeRuntime.waitUntil`; a `{wait:true}`
+  mode drains synchronously (used for testing).
+- **fetch-menu** (hybrid): cache hit → serve; else if an active job exists →
+  `pending`; else if a **recent failed** job (7-day cooldown) → `not_covered`
+  without re-spending on a known-dead site; else **live try** → found, or on
+  `timeout` enqueue + fire-and-forget kick the worker + `pending`, or a genuine
+  miss → `not_covered`. `acquireMenu` now takes a `budgetMs`; its timeout no
+  longer self-logs a miss (the caller decides queue-vs-give-up).
+- **Cron** (`session9_queue_cron.sql`, run via connector): `menu-queue-tick`
+  every minute — reset jobs stuck `processing` >10 min, then `net.http_post` the
+  worker (reading the secret from **Vault**) only when pending work exists;
+  `menu-queue-freshness` daily 03:00 UTC — re-enqueue menus older than 30 days.
+- **Auth** with no new key-management pain: one `QUEUE_WORKER_SECRET` set via CLI
+  (project-wide → both fetch-menu's kick and the worker see it) + stored in Vault
+  (→ cron reads it). No service-role key ever handled.
+- **Client:** `MenuResult.pending` state; `menu_screen` refactored from a
+  one-shot FutureBuilder to imperative load + a `_Pending` widget that auto-polls.
+
+*Checks met — live-verified against the deployed functions:*
+- Worker auth: missing/wrong secret → **401**; empty queue → no-op.
+- **Cron tick fires**: within a minute of enqueue it kicked a worker that claimed
+  the job (observed status → `processing`).
+- **Full success path**: a throwaway restaurant pointed at a real menu → acquired
+  **57 dishes + auto-estimated all 57 → `done`** in ~105s (via the cron kick).
+- **Headline live-try loop**: fetch-menu on a heavy site ran ~58s live, timed
+  out, enqueued + kicked, returned `pending`; the worker it kicked then filled the
+  menu (53 dishes + estimates) — no cron needed.
+- Genuine miss (Instagram-only place) → `not_covered` + `menu_requests` logged +
+  **0 jobs enqueued** (a real miss never clogs the queue).
+- Active job → `pending` in ~3s (no live try); recent-failed → `not_covered` in
+  ~3s (no re-spend). `flutter analyze` clean.
+
+*Known accepted cost:* on a live-try **timeout**, the site is scraped twice (the
+wasted ~55s live attempt, then the worker re-acquires from scratch — no resume).
+That's the price of the "try live first" UX the user wanted; acceptable because
+misses are rare and cost guards are parked pre-launch.
+
+*Still open (not blocking):* the live-try wastes work on a timeout (above); a
+per-place concurrency edge (two simultaneous first-time visitors both run a live
+try before either enqueues) — harmless, just double spend on that rare race.
 
 ---
 

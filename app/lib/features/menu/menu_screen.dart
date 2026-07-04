@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../models/dish.dart';
@@ -22,7 +24,18 @@ class MenuScreen extends StatefulWidget {
 }
 
 class _MenuScreenState extends State<MenuScreen> {
-  late Future<MenuResult> _menuFuture;
+  /// While a fetch is in flight and we have nothing to show yet.
+  bool _loading = true;
+  Object? _error;
+  MenuResult? _result;
+
+  /// When the menu is being acquired in the background (Session 9), quietly
+  /// re-check on an interval so it appears on its own the moment it's ready —
+  /// no user action. After [_maxPolls] we stop and offer a manual refresh.
+  Timer? _pollTimer;
+  int _pollCount = 0;
+  static const _maxPolls = 8; // ~2 minutes at 15s
+  static const _pollInterval = Duration(seconds: 15);
 
   /// The basket: dish ids the user has selected. Kept alongside the dishes
   /// themselves so Check can hand the full objects to the assessment screen
@@ -32,13 +45,52 @@ class _MenuScreenState extends State<MenuScreen> {
   @override
   void initState() {
     super.initState();
-    _menuFuture = MenuService.fetchMenu(widget.restaurant.id);
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
+  }
+
+  /// Fetch the menu. [poll] = a background re-check (keep showing the pending
+  /// screen rather than flashing the full-screen spinner).
+  Future<void> _load({bool poll = false}) async {
+    if (!poll) setState(() => _loading = true);
+    try {
+      final res = await MenuService.fetchMenu(widget.restaurant.id);
+      if (!mounted) return;
+      setState(() {
+        _result = res;
+        _error = null;
+        _loading = false;
+      });
+      _scheduleNextPoll(res);
+    } catch (e) {
+      if (!mounted) return;
+      _pollTimer?.cancel();
+      setState(() {
+        _error = e;
+        _loading = false;
+      });
+    }
+  }
+
+  void _scheduleNextPoll(MenuResult res) {
+    _pollTimer?.cancel();
+    if (res.pending && _pollCount < _maxPolls) {
+      _pollTimer = Timer(_pollInterval, () {
+        _pollCount++;
+        _load(poll: true);
+      });
+    }
   }
 
   void _reload() {
-    setState(() {
-      _menuFuture = MenuService.fetchMenu(widget.restaurant.id);
-    });
+    _pollTimer?.cancel();
+    _pollCount = 0;
+    _load();
   }
 
   void _toggle(Dish dish) {
@@ -69,44 +121,45 @@ class _MenuScreenState extends State<MenuScreen> {
       appBar: AppBar(
         title: Text(widget.restaurant.name),
       ),
-      body: FutureBuilder<MenuResult>(
-        future: _menuFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const _MenuLoading();
-          }
-          if (snapshot.hasError) {
-            return _MenuError(onRetry: _reload);
-          }
-          final result = snapshot.data!;
-          if (!result.found) {
-            return const _NotCovered();
-          }
-          if (result.dishes.isEmpty) {
-            return const _NotCovered();
-          }
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Verified badge (Session 8). Shown only for a human-verified menu;
-              // nothing flips menus.verified true until Session 11, so today this
-              // is invisible — the wiring is ready for when it does.
-              if (result.verified) const _VerifiedBanner(),
-              Expanded(
-                child: _MenuList(
-                  dishes: result.dishes,
-                  selectedIds: _selected.keys.toSet(),
-                  onTap: _toggle,
-                ),
-              ),
-            ],
-          );
-        },
-      ),
+      body: _buildBody(),
       bottomNavigationBar: _CheckBar(
         count: _selected.length,
         onPressed: _openCheck,
       ),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_loading) return const _MenuLoading();
+    if (_error != null) return _MenuError(onRetry: _reload);
+
+    final result = _result!;
+    if (result.pending) {
+      return _Pending(
+        onRefresh: _reload,
+        // Still auto-polling → show the quiet "checking…" pulse; once we've
+        // stopped, the manual refresh is the way forward.
+        autoChecking: _pollCount < _maxPolls,
+      );
+    }
+    if (!result.found || result.dishes.isEmpty) {
+      return const _NotCovered();
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Verified badge (Session 8). Shown only for a human-verified menu;
+        // nothing flips menus.verified true until Session 11, so today this
+        // is invisible — the wiring is ready for when it does.
+        if (result.verified) const _VerifiedBanner(),
+        Expanded(
+          child: _MenuList(
+            dishes: result.dishes,
+            selectedIds: _selected.keys.toSet(),
+            onTap: _toggle,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -335,6 +388,67 @@ class _MenuError extends StatelessWidget {
               icon: const Icon(Icons.refresh),
               label: const Text('נסו שוב'),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The "we're getting this menu right now" state (Session 9). The live fetch
+/// took too long, so acquisition moved to the background queue. Calm and
+/// hopeful — not an error, not a miss. The screen auto-polls; [autoChecking]
+/// shows a quiet pulse while it does, and there's always a manual refresh.
+class _Pending extends StatelessWidget {
+  const _Pending({required this.onRefresh, required this.autoChecking});
+
+  final VoidCallback onRefresh;
+  final bool autoChecking;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.restaurant_menu, size: 48),
+            const SizedBox(height: 16),
+            Text(
+              'אנחנו אוספים את התפריט הזה 👨‍🍳',
+              style: Theme.of(context).textTheme.titleMedium,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'זה לוקח כמה דקות. אפשר להישאר כאן — נציג אותו מיד כשיהיה מוכן, '
+              'או לחזור לבדוק עוד מעט.',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 20),
+            if (autoChecking)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    'בודקים…',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              )
+            else
+              OutlinedButton.icon(
+                onPressed: onRefresh,
+                icon: const Icon(Icons.refresh),
+                label: const Text('בדקו שוב'),
+              ),
           ],
         ),
       ),
