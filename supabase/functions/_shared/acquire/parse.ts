@@ -2,9 +2,20 @@
 // PDF/image via vision) into structured dishes, or an empty list. No web tools,
 // no thinking: this is mechanical extraction and must be fast and cheap.
 
+import { fetchWithTimeout } from "./scrape.ts";
+
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
-// Sonnet 4.6 (overridable). Estimation uses Haiku elsewhere.
-const PARSE_MODEL = Deno.env.get("MENU_MODEL") ?? "claude-sonnet-4-6";
+// Haiku (overridable via PARSE_MODEL): grounded JSON extraction is exactly its
+// use case, and output-token speed dominates parse latency. Discovery keeps its
+// own model (MENU_MODEL, Sonnet) — the two were split in Session 10.
+const PARSE_MODEL = Deno.env.get("PARSE_MODEL") ?? "claude-haiku-4-5";
+// Anti-hang bound, not pacing: without it a stuck Anthropic call silently eats
+// the caller's whole acquisition budget. Generous enough for a legitimately
+// large menu's JSON (thousands of output tokens).
+const PARSE_TIMEOUT_MS = 40_000;
+// Real menus never need more input than this; the tail of an oversized scrape
+// is nav/footer/blog noise that costs input tokens and seconds.
+const MAX_PARSE_CHARS = 80_000;
 
 const GROUNDED_PROMPT =
   `You are given the raw content of a web page or image that may contain a
@@ -48,7 +59,7 @@ export interface ParsedDish {
 export function parseMenuText(content: string): Promise<ParsedDish[]> {
   return callParse([{
     type: "text",
-    text: `Raw page content to parse:\n\n${content}`,
+    text: `Raw page content to parse:\n\n${content.slice(0, MAX_PARSE_CHARS)}`,
   }]);
 }
 
@@ -68,7 +79,7 @@ async function callParse(userContent: unknown[]): Promise<ParsedDish[]> {
   const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not configured.");
 
-  const res = await fetch(ANTHROPIC_URL, {
+  const res = await fetchWithTimeout(ANTHROPIC_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -82,7 +93,7 @@ async function callParse(userContent: unknown[]): Promise<ParsedDish[]> {
       system: GROUNDED_PROMPT,
       messages: [{ role: "user", content: userContent }],
     }),
-  });
+  }, PARSE_TIMEOUT_MS);
   if (!res.ok) {
     throw new Error(`Parse request failed (${res.status}): ${await res.text()}`);
   }

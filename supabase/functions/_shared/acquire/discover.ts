@@ -59,7 +59,10 @@ export async function discoverOwnSite(
           messages,
         }),
       }, remaining);
-      if (!res.ok) return null;
+      if (!res.ok) {
+        console.error(`discovery API ${res.status}: ${(await res.text()).slice(0, 300)}`);
+        return null;
+      }
       const data = await res.json();
       if (data.stop_reason === "pause_turn") {
         messages.push({ role: "assistant", content: data.content });
@@ -68,8 +71,10 @@ export async function discoverOwnSite(
       final = data;
       break;
     }
-  } catch {
-    return null; // timeout / network error → no own site found
+  } catch (err) {
+    // timeout / network error → no own site found
+    console.error("discovery aborted:", err instanceof Error ? err.message : err);
+    return null;
   }
   if (!final) return null;
 
@@ -80,7 +85,9 @@ export async function discoverOwnSite(
     .trim() ?? "";
 
   if (!text || /^NONE\b/i.test(text)) return null;
-  // Pull the first URL out of whatever the model returned.
-  const match = text.match(/https?:\/\/[^\s)"']+/);
-  return match ? match[0] : null;
+  // Pull the first URL out of whatever the model returned. Exclude markdown
+  // emphasis/link chars (a bold "**url**" answer used to leak the trailing
+  // asterisks into the URL) and strip trailing sentence punctuation.
+  const match = text.match(/https?:\/\/[^\s)"'*\]]+/);
+  return match ? match[0].replace(/[.,;:!?]+$/, "") : null;
 }
