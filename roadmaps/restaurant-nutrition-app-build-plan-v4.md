@@ -57,21 +57,28 @@ over intact). Session 15 is v3's quality ops (carried over intact).
 
 ## Session arc
 
-- **S10 — Acquisition speed** *(server-only; no UX change; biggest raw wins)*
-- **S11 — Hot path & client responsiveness** *(client + one server tweak; small
-  deliberate UX changes)*
-- **S12 — Instant assessment** *(prefetch + progressive results; the biggest
-  perceived-speed win; visible UX change)*
-- **S13 — Queue: user-first, no dead time** *(DB + worker; UX unchanged, waits
-  shorten)*
-- **S14 — Pipeline & scraper depth + Hebrew normalization** *(v3's S10, carried
-  over verbatim in scope)*
-- **S15 — Quality ops: verification + feedback + observability** *(v3's S11,
-  carried over verbatim in scope)*
+**Order re-decided 2026-07-06 (user):** the live fetch actually working IS the
+product — coverage depth and its queue safety-net come before client polish.
+Session numbers are names, not sequence; the execution order is:
 
-Each session is independently deployable and independently verifiable. Do them
-in order — S10 makes S13's queue faster too (the worker runs the same
-pipeline), and S12 leans on S11's client caches.
+1. **S10 — Acquisition speed** ✓ *(done 2026-07-06 — created the budget
+   headroom the depth work below spends)*
+2. **S14 — Pipeline & scraper depth + Hebrew normalization** *(v3's S10,
+   carried over verbatim in scope — the organic coverage engine; NEXT)*
+3. **S13 — Queue: user-first, no dead time** *(DB + worker; the fallback path
+   when a site is genuinely slow/heavy)*
+4. **S11 — Hot path & client responsiveness** *(client + one server tweak;
+   small deliberate UX changes)*
+5. **S12 — Instant assessment** *(prefetch + progressive results; the biggest
+   perceived-speed win; visible UX change)*
+6. **S15 — Quality ops: verification + feedback + observability** *(v3's S11,
+   carried over verbatim in scope)*
+
+Each session is independently deployable and independently verifiable.
+Build-order notes: S14 before S12 is safe (the S12 dish-diff will key on
+already-normalized Hebrew names, which is the stable direction); S14's heavier
+scraping is affordable because S10 already cut the per-page waste; S12 still
+leans on S11's client caches, so keep S11 before S12.
 
 **Expected net effect (order-of-magnitude, verify per session):** cached menu
 loads ~300ms faster and instant on re-open; live acquisitions 25–50s faster
@@ -541,6 +548,18 @@ engine: after S10–S13 make the pipeline fast, this makes it deep.)*
 **Goal:** the pipeline must reliably capture whatever a user searches —
 including the JS-API, PDF and image menus Jina/Firecrawl currently miss — and
 emit consistent Hebrew.
+
+**Definition of "working" (added 2026-07-06 — this is the product bar, decided
+with the user):** build a test set of ~10 real Israeli restaurants spanning the
+known failure modes (JS-gated: Taizu pages/McD product grid/Cafe Xoho-style Wix;
+PDF: Goocha's Hebrew PDF incl. the garbled-RTL case; image menus; bilingual
+sites; plus 2 known-good controls). Record per-site: dishes captured vs. dishes
+actually on the menu (hand-counted), live-try vs. worker vs. miss, and wall
+time. Target: **any restaurant whose menu exists as text/PDF/image on its own
+site gets captured with realistic completeness (not 24-of-67), fully in
+Hebrew** — and a documented honest list of what still can't work (platform-only
+/ Instagram-only places have nothing to scrape; that's the parked
+photo-fallback, not a pipeline bug).
 
 **UX change required: none directly** (the app guard from v3 already hides
 non-Hebrew descriptions; this session makes the guard unnecessary for new
