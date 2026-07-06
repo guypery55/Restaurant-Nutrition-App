@@ -26,6 +26,14 @@ import { discoverOwnSite } from "./discover.ts";
 // (WORKER_BUDGET_MS) off the request path — so heavy/slow sites that used to
 // time out into menu_requests now get acquired instead.
 const BUDGET_MS = 55_000;
+// Hedged scraping (Session 10): Firecrawl no longer waits for Jina's full 25s
+// timeout — it starts this soon after Jina unless Jina has already produced a
+// gate-passing page (and immediately if Jina settles without one).
+const HEDGE_DELAY_MS = 5_000;
+// The zero-dish secondary retry (another scrape + parse) only runs when at
+// least this much budget remains — in practice: the background worker keeps
+// it, the live try skips it rather than dragging the user into a timeout.
+const RETRY_MIN_REMAINING_MS = 35_000;
 const IMAGE_EXT = /\.(png|jpe?g|webp|gif)$/;
 const ASSET_EXT = /\.(svg|png|jpe?g|webp|gif|pdf|ico|css|js|mp4|woff2?)$/;
 const MENU_HINT = /menu|תפריט|%d7%aa%d7%a4%d7%a8%d7%99%d7%98/i; // incl. URL-encoded תפריט
@@ -61,6 +69,7 @@ export async function acquireMenu(
   opts: { budgetMs?: number } = {},
 ): Promise<AcquireResult> {
   const budgetMs = opts.budgetMs ?? BUDGET_MS;
+  const deadline = Date.now() + budgetMs;
   let timer: number | undefined;
   const timeout = new Promise<AcquireResult>((resolve) => {
     // A timeout is NOT logged as a miss here: fetch-menu's live try enqueues it
@@ -72,7 +81,7 @@ export async function acquireMenu(
     }, budgetMs) as unknown as number;
   });
   try {
-    return await Promise.race([runPipeline(db, r), timeout]);
+    return await Promise.race([runPipeline(db, r, deadline), timeout]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
@@ -81,6 +90,7 @@ export async function acquireMenu(
 async function runPipeline(
   db: SupabaseClient,
   r: AcquireRestaurant,
+  deadline: number,
 ): Promise<AcquireResult> {
   // 1. Resolve a scrape URL — own site only.
   let url = (r.website ?? "").trim();
@@ -92,6 +102,12 @@ async function runPipeline(
       return { status: "not_covered", reason };
     }
     url = discovered;
+    // Persist the found site so retries (the background worker, post-cooldown
+    // revisits) start scraping immediately instead of re-paying the ~30s
+    // discovery search. Best-effort: a write failure must not kill the acquire.
+    const { error } = await db.from("restaurants")
+      .update({ website: url }).eq("id", r.id);
+    if (error) console.error("persist discovered website failed:", error.message);
   }
 
   let dishes: ParsedDish[] = [];
@@ -106,14 +122,18 @@ async function runPipeline(
     dishes = dedupeDishes(await parseMenuFile(url));
     scraper = "vision";
   } else {
+    // Kick off /map (needs only the origin) alongside the landing scrape —
+    // they're independent, so they must not add serially (Session 10).
+    const origin = safeOrigin(url);
+    const mapPromise = origin ? firecrawlMap(origin, "menu") : Promise.resolve([]);
+
     // Scrape the landing page once.
     const landing = await scrapeBest(url);
 
     // Discover menu-category subpages: links on the page itself + Firecrawl /map.
-    const origin = safeOrigin(url);
     const candidates = Array.from(new Set([
       ...extractMenuLinks(landing.text),
-      ...(origin ? await firecrawlMap(origin, "menu") : []),
+      ...(await mapPromise),
     ])).filter((c) =>
       c !== url &&
       !isPlatformUrl(c) &&
@@ -128,7 +148,7 @@ async function runPipeline(
     // Parse the landing page + every menu page in parallel, then merge.
     const pages = [url, ...candidates];
     const results = await Promise.all(
-      pages.map((p) => scrapeAndParse(p, p === url ? landing : null)),
+      pages.map((p) => scrapeAndParse(p, p === url ? landing : null, deadline)),
     );
 
     const merged: ParsedDish[] = [];
@@ -188,17 +208,23 @@ async function runPipeline(
 
 /// Scrape one page and grounded-parse it. `pre` lets the caller pass an already
 /// scraped landing page to avoid a duplicate fetch. Honors the plan's secondary
-/// check: if Jina text parses to 0 dishes, retry the page once via Firecrawl.
+/// check: if Jina text parses to 0 dishes, retry the page once via Firecrawl —
+/// but only when enough budget remains (the worker's long budget qualifies; a
+/// tight live try skips it rather than dragging every page into the timeout).
 async function scrapeAndParse(
   pageUrl: string,
   pre: { text: string; scraper: string } | null,
+  deadline: number,
 ): Promise<{ scraper: string; dishes: ParsedDish[] }> {
   try {
     const s = pre ?? await scrapeBest(pageUrl);
     let dishes = s.text ? await parseMenuText(s.text) : [];
     let scraper = s.scraper;
 
-    if (dishes.length === 0 && s.scraper === "jina") {
+    if (
+      dishes.length === 0 && s.scraper === "jina" &&
+      deadline - Date.now() > RETRY_MIN_REMAINING_MS
+    ) {
       // Secondary: Jina read it but nothing parsed → try Firecrawl on this page.
       try {
         const fc = await firecrawlScrape(pageUrl);
@@ -217,26 +243,54 @@ async function scrapeAndParse(
   }
 }
 
-/// Scrape a URL: Jina first; if it fails the menu gate, Firecrawl. Returns text
-/// only if it passes looksLikeMenu (empty text otherwise).
+/// Scrape a URL — hedged (Session 10). Jina (free) starts immediately;
+/// Firecrawl starts HEDGE_DELAY_MS later unless Jina has already produced a
+/// gate-passing page, and immediately if Jina settles without one. The first
+/// result that passes looksLikeMenu wins; the loser is ignored (both calls are
+/// individually timeout-capped in scrape.ts, so nothing dangles long). Worst
+/// case drops from 25s+25s sequential to ~max(jina, 5s+firecrawl).
 async function scrapeBest(url: string): Promise<{ text: string; scraper: string }> {
-  let jina = "";
-  try {
-    jina = await jinaScrape(url);
-  } catch {
-    jina = "";
-  }
-  if (looksLikeMenu(jina)) return { text: jina, scraper: "jina" };
+  return await new Promise((resolve) => {
+    let won = false;
+    let unsettled = 2;
+    const report = (text: string, scraper: string) => {
+      if (!won && looksLikeMenu(text)) {
+        won = true;
+        resolve({ text, scraper });
+      }
+      if (--unsettled === 0 && !won) resolve({ text: "", scraper: "" });
+    };
 
-  let fc = "";
-  try {
-    fc = await firecrawlScrape(url);
-  } catch {
-    fc = "";
-  }
-  if (looksLikeMenu(fc)) return { text: fc, scraper: "firecrawl" };
+    // Start Firecrawl on whichever comes first: the hedge delay, or Jina
+    // settling without a win (failure OR gate-failing shell text).
+    let triggerFirecrawl!: () => void;
+    const firecrawlGate = new Promise<void>((r) => {
+      triggerFirecrawl = r;
+      setTimeout(r, HEDGE_DELAY_MS);
+    });
 
-  return { text: "", scraper: "" };
+    jinaScrape(url).then(
+      (text) => {
+        report(text, "jina");
+        if (!won) triggerFirecrawl();
+      },
+      () => {
+        report("", "");
+        triggerFirecrawl();
+      },
+    );
+
+    firecrawlGate.then(() => {
+      if (won) {
+        report("", ""); // settle the bookkeeping without a paid call
+        return;
+      }
+      firecrawlScrape(url).then(
+        (text) => report(text, "firecrawl"),
+        () => report("", ""),
+      );
+    });
+  });
 }
 
 /// Merge dishes from multiple pages, deduping by normalized name_he and keeping

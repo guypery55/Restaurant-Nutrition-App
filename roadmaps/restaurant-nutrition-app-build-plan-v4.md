@@ -182,6 +182,53 @@ see the pending screen.
 - Zero fabrication: no-menu site still returns `not_covered` + `menu_requests`
   row.
 
+**OUTCOME (built + deployed + live-verified 2026-07-06):**
+
+*All five items shipped* (`parse.ts`, `acquire/index.ts`, `discover.ts`);
+`fetch-menu` + `process-menu-queue` deployed. Two deviations/additions, both
+found live:
+
+- **PARSE_TIMEOUT_MS = 40s, not the planned 25s** — the timeout is anti-hang,
+  not pacing, and a legitimately large menu's JSON can exceed 25s even on
+  Haiku; 40s still can't eat a whole budget.
+- **Discovery was silently broken in two ways** (surfaced because persistence
+  finally made its output visible): (a) every failure path returned null with
+  zero logging — error logging added; (b) the URL regex leaked markdown
+  emphasis into the URL (a bold `**https://www.taizu.co.il**` answer persisted
+  the trailing `**` and would have poisoned `restaurants.website` forever) —
+  regex now excludes `*`/`]` and strips trailing punctuation.
+
+*A/B gate (same site, same 9 pages, minutes apart):* McDonald's IL —
+**Haiku 26.8s / 27 dishes** vs **Sonnet 39.8s / 27 dishes, identical names**
+→ 100% capture, zero inventions, ~33% faster. Haiku default locked. June
+baseline for the same site (Sonnet + sequential scraping): ~40s.
+
+*Worker path:* Thai House test job claimed → acquired → **auto-estimated 24
+dishes → done in ~82s, 1 attempt** (S9 reference: ~105s for 57 dishes).
+
+*Discovery persistence:* throwaway with `website=null` named "טאיזו" →
+resolved `https://www.taizu.co.il` (clean) → **verified written to
+`restaurants.website`** → subsequent runs skip the ~30s search by code path.
+Generic names ("בית תאילנדי") honestly returned NONE across retries — misses
+logged as `no_website`, nothing fabricated, no jobs enqueued.
+
+*Zero fabrication re-verified:* every miss logged to `menu_requests` with a
+reason; no menu stored on any zero-dish run; catalog restored to exactly
+6 menus / 251 dishes / 251 estimates; all test rows cleaned.
+
+*Known limits recorded honestly:*
+- **Keyless Jina + Firecrawl rate-limit storms** are real: back-to-back force
+  runs on one site produced two all-pages-blank runs (even Firecrawl /scrape
+  429'd while /map worked). Production rarely force-refetches one site
+  repeatedly, but the fix is cheap → **USER ACTION: set `JINA_API_KEY`**
+  (`supabase secrets set JINA_API_KEY=...`; code already sends it).
+- Taizu/McDonald's JS-grid product pages still parse 0 dishes, and Thai House
+  yielded 24/67 dishes from its one readable page — that's S14 (scraper
+  depth), unchanged by this session.
+- First post-deploy request can still be served by the previous function
+  version (observed v18 handling the first call after v19 deployed) — wait a
+  few seconds after deploying before measuring.
+
 ---
 
 ## Session 11 — Hot path & client responsiveness
